@@ -222,26 +222,94 @@ if result["success"]:
 
 ---
 
+## MANDATORY: Save All Results to Sources Folder
+
+**Every web search, URL extraction, and deep research result MUST be saved to the project's `sources/` folder.**
+
+This ensures all research is preserved for reproducibility, auditability, and context window recovery. Research results are expensive to obtain and impossible to recreate exactly — always persist them.
+
+### Saving Rules
+
+| Operation | `-o` Flag Target | Filename Pattern |
+|-----------|-----------------|------------------|
+| Web Search | `sources/search_<topic>.md` | `search_YYYYMMDD_HHMMSS_<brief_topic>.md` |
+| URL Extract | `sources/extract_<source>.md` | `extract_YYYYMMDD_HHMMSS_<brief_source>.md` |
+| Deep Research | `sources/research_<topic>.md` | `research_YYYYMMDD_HHMMSS_<brief_topic>.md` |
+
+### How to Save (Always Use `-o` Flag)
+
+**CRITICAL: Every call to `parallel_web.py` MUST include the `-o` flag pointing to the `sources/` folder.**
+
+```bash
+# Web search — ALWAYS save to sources/
+python scripts/parallel_web.py search "latest advances in quantum computing 2025" \
+  -o sources/search_20250217_143000_quantum_computing.md
+
+# URL extraction — ALWAYS save to sources/
+python scripts/parallel_web.py extract "https://example.com/article" --objective "key findings" \
+  -o sources/extract_20250217_143500_example_article.md
+
+# Deep research — ALWAYS save to sources/
+python scripts/parallel_web.py research "comprehensive analysis of the global EV battery market" \
+  -o sources/research_20250217_144000_ev_battery_market.md
+
+# Structured JSON research — save JSON to sources/
+python scripts/parallel_web.py research "renewable energy storage market" --structured --json \
+  -o sources/research_20250217_144500_renewable_energy.json
+```
+
+### Why Save Everything
+
+1. **Reproducibility**: Every claim in the final document can be traced back to its raw source material
+2. **Context Window Recovery**: If context is compacted mid-task, saved results can be re-read from `sources/` without re-querying the API
+3. **Audit Trail**: The `sources/` folder provides complete transparency into how information was gathered
+4. **Reuse Across Sections**: Saved research can be referenced by multiple sections without duplicate API calls
+5. **Cost Efficiency**: Avoid redundant API calls by checking `sources/` for existing results before making new queries
+6. **Peer Review Support**: Reviewers can verify the research backing every claim
+
+### Logging
+
+When saving research results, always log:
+
+```
+[HH:MM:SS] SAVED: Search results to sources/search_20250217_143000_quantum_computing.md (10 results)
+[HH:MM:SS] SAVED: URL extraction to sources/extract_20250217_143500_example_article.md (2,450 words)
+[HH:MM:SS] SAVED: Deep research report to sources/research_20250217_144000_ev_battery_market.md (5,200 words, 15 citations)
+```
+
+### Before Making a New Query, Check Sources First
+
+Before calling `parallel_web.py`, check if a relevant result already exists in `sources/`:
+
+```bash
+ls sources/  # Check existing saved results
+```
+
+If a prior search covers the same topic, re-read the saved file instead of making a new API call.
+
+---
+
 ## Integration with Scientific Writer
 
 ### Routing Table
 
 | Task | Tool | Command |
 |------|------|---------|
-| Web search (any) | `parallel_web.py search` | `python scripts/parallel_web.py search "query"` |
-| Extract URL content | `parallel_web.py extract` | `python scripts/parallel_web.py extract "url"` |
-| Deep research | `parallel_web.py research` | `python scripts/parallel_web.py research "query"` |
+| Web search (any) | `parallel_web.py search` | `python scripts/parallel_web.py search "query" -o sources/search_<topic>.md` |
+| Extract URL content | `parallel_web.py extract` | `python scripts/parallel_web.py extract "url" -o sources/extract_<source>.md` |
+| Deep research | `parallel_web.py research` | `python scripts/parallel_web.py research "query" -o sources/research_<topic>.md` |
 | Academic paper search | `research_lookup.py` | Routes to Perplexity sonar-pro-search |
-| DOI/metadata lookup | `parallel_web.py search` or `extract` | Search or extract from DOI URLs |
-| Current events/news | `parallel_web.py search` | `python scripts/parallel_web.py search "news query"` |
+| DOI/metadata lookup | `parallel_web.py search` or `extract` | Search or extract from DOI URLs (save to sources/) |
+| Current events/news | `parallel_web.py search` | `python scripts/parallel_web.py search "news query" -o sources/search_<topic>.md` |
 
 ### When Writing Scientific Documents
 
-1. **Before writing any section**, use deep research to gather background information
-2. **For academic citations**, use `research-lookup` (which routes academic queries to Perplexity)
-3. **For metadata verification** (DOIs, journal names, page numbers), use `parallel_web.py search` or `extract`
-4. **For current market/industry data**, use `parallel_web.py research --processor pro-fast`
-5. **For reading specific papers/URLs**, use `parallel_web.py extract`
+1. **Before writing any section**, use deep research to gather background information — **save results to `sources/`**
+2. **For academic citations**, use `research-lookup` (which routes academic queries to Perplexity) — **save results to `sources/`**
+3. **For metadata verification** (DOIs, journal names, page numbers), use `parallel_web.py search` or `extract` — **save results to `sources/`**
+4. **For current market/industry data**, use `parallel_web.py research --processor pro-fast` — **save results to `sources/`**
+5. **For reading specific papers/URLs**, use `parallel_web.py extract` — **save results to `sources/`**
+6. **Before any new query**, check `sources/` for existing results to avoid duplicate API calls
 
 ---
 

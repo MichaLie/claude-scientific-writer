@@ -216,21 +216,84 @@ export OPENROUTER_API_KEY="your_openrouter_api_key"
 ### Command-Line Usage
 
 ```bash
-# Auto-routed research (recommended)
-python research_lookup.py "your query"
+# Auto-routed research (recommended) — ALWAYS save to sources/
+python research_lookup.py "your query" -o sources/research_YYYYMMDD_HHMMSS_<topic>.md
 
-# Force specific backend
-python research_lookup.py "your query" --force-backend parallel
-python research_lookup.py "your query" --force-backend perplexity
+# Force specific backend — ALWAYS save to sources/
+python research_lookup.py "your query" --force-backend parallel -o sources/research_<topic>.md
+python research_lookup.py "your query" --force-backend perplexity -o sources/papers_<topic>.md
 
-# Save to file
-python research_lookup.py "your query" -o results.txt
+# JSON output — ALWAYS save to sources/
+python research_lookup.py "your query" --json -o sources/research_<topic>.json
 
-# JSON output
-python research_lookup.py "your query" --json -o results.json
+# Batch queries — ALWAYS save to sources/
+python research_lookup.py --batch "query 1" "query 2" "query 3" -o sources/batch_research_<topic>.md
+```
 
-# Batch queries
-python research_lookup.py --batch "query 1" "query 2" "query 3"
+---
+
+## MANDATORY: Save All Results to Sources Folder
+
+**Every research-lookup result MUST be saved to the project's `sources/` folder.**
+
+This is non-negotiable. Research results are expensive to obtain and critical for reproducibility.
+
+### Saving Rules
+
+| Backend | `-o` Flag Target | Filename Pattern |
+|---------|-----------------|------------------|
+| Parallel Deep Research | `sources/research_<topic>.md` | `research_YYYYMMDD_HHMMSS_<brief_topic>.md` |
+| Perplexity (academic) | `sources/papers_<topic>.md` | `papers_YYYYMMDD_HHMMSS_<brief_topic>.md` |
+| Batch queries | `sources/batch_<topic>.md` | `batch_research_YYYYMMDD_HHMMSS_<brief_topic>.md` |
+
+### How to Save
+
+**CRITICAL: Every call to `research_lookup.py` MUST include the `-o` flag pointing to the `sources/` folder.**
+
+```bash
+# General research — save to sources/
+python research_lookup.py "Recent advances in CRISPR gene editing 2025" \
+  -o sources/research_20250217_143000_crispr_advances.md
+
+# Academic paper search — save to sources/
+python research_lookup.py "Find papers on transformer attention mechanisms in NeurIPS 2024" \
+  -o sources/papers_20250217_143500_transformer_attention.md
+
+# Forced backend — save to sources/
+python research_lookup.py "AI regulation landscape" --force-backend parallel \
+  -o sources/research_20250217_144000_ai_regulation.md
+
+# Batch queries — save to sources/
+python research_lookup.py --batch "mRNA vaccines efficacy" "mRNA vaccines safety" \
+  -o sources/batch_research_20250217_144500_mrna_vaccines.md
+```
+
+### Why Save Everything
+
+1. **Reproducibility**: Every citation and claim can be traced back to its raw research source
+2. **Context Window Recovery**: If context is compacted, saved results can be re-read without re-querying
+3. **Audit Trail**: The `sources/` folder documents exactly how all research information was gathered
+4. **Reuse Across Sections**: Multiple sections can reference the same saved research without duplicate queries
+5. **Cost Efficiency**: Check `sources/` for existing results before making new API calls
+6. **Peer Review Support**: Reviewers can verify the research backing every citation
+
+### Before Making a New Query, Check Sources First
+
+Before calling `research_lookup.py`, check if a relevant result already exists:
+
+```bash
+ls sources/  # Check existing saved results
+```
+
+If a prior lookup covers the same topic, re-read the saved file instead of making a new API call.
+
+### Logging
+
+When saving research results, always log:
+
+```
+[HH:MM:SS] SAVED: Research lookup to sources/research_20250217_143000_crispr_advances.md (3,800 words, 8 citations)
+[HH:MM:SS] SAVED: Paper search to sources/papers_20250217_143500_transformer_attention.md (6 papers found)
 ```
 
 ---
@@ -239,11 +302,11 @@ python research_lookup.py --batch "query 1" "query 2" "query 3"
 
 This skill enhances scientific writing by providing:
 
-1. **Literature Review Support**: Gather current research for introduction and discussion
-2. **Methods Validation**: Verify protocols against current standards
-3. **Results Contextualization**: Compare findings with recent similar studies
-4. **Discussion Enhancement**: Support arguments with latest evidence
-5. **Citation Management**: Provide properly formatted citations
+1. **Literature Review Support**: Gather current research for introduction and discussion — **save to `sources/`**
+2. **Methods Validation**: Verify protocols against current standards — **save to `sources/`**
+3. **Results Contextualization**: Compare findings with recent similar studies — **save to `sources/`**
+4. **Discussion Enhancement**: Support arguments with latest evidence — **save to `sources/`**
+5. **Citation Management**: Provide properly formatted citations — **save to `sources/`**
 
 ## Complementary Tools
 
