@@ -77,10 +77,12 @@ This is non-negotiable. Research results are expensive to obtain and critical fo
 
 **Key Rules:**
 - **ALWAYS** use the `-o` flag to save results to `sources/` — never discard research output
+- **ALWAYS** ensure saved files preserve all citations, source URLs, and DOIs (the scripts do this automatically — text format includes a Sources/References section; `--json` preserves full citation objects)
 - **ALWAYS** check `sources/` for existing results before making new API calls (avoid duplicate queries)
-- **ALWAYS** log saved results: `[HH:MM:SS] SAVED: [type] to sources/[filename] ([N] words/results)`
+- **ALWAYS** log saved results: `[HH:MM:SS] SAVED: [type] to sources/[filename] ([N] words/results, [N] citations)`
 - The `sources/` folder provides a complete audit trail of all research conducted for the project
 - Saved results enable context window recovery — re-read from `sources/` instead of re-querying APIs
+- Use `--json` format when maximum citation metadata is needed for BibTeX generation or DOI verification
 
 ## Workflow Protocol
 
@@ -283,20 +285,44 @@ python scripts/generate_image.py "image description" -o figures/output.png
 - If comparisons are made → generate a comparison diagram
 - If the reader might benefit from a visual → generate one
 
-### Citation Metadata Verification
+### Citation Metadata Verification (MANDATORY)
 
-For each citation in references.bib:
+**CRITICAL: Every BibTeX entry MUST have complete metadata. Incomplete citations are NOT acceptable.**
+
+After adding ANY citation to `references.bib`, immediately check for missing fields and perform a web search to fill them in.
 
 **Required BibTeX fields:**
-- @article: author, title, journal, year, volume (+ pages, DOI)
-- @inproceedings: author, title, booktitle, year
+- @article: author, title, journal, year, volume, pages, DOI
+- @inproceedings: author, title, booktitle, year, pages
 - @book: author/editor, title, publisher, year
 
-**Verification process:**
+**Incomplete Metadata Detection and Repair (MANDATORY):**
+
+After writing each section (or at minimum before compiling the final PDF), scan `references.bib` for entries missing any of these fields: `volume`, `pages`, `number`, `doi`. For EVERY incomplete entry:
+
+1. **Search for the missing metadata** using `parallel_web.py search`:
+   ```bash
+   python scripts/parallel_web.py search "AUTHOR TITLE JOURNAL YEAR volume pages DOI" -o sources/search_YYYYMMDD_HHMMSS_citation_metadata.md
+   ```
+2. **If DOI is known but other fields missing**, extract metadata from the DOI:
+   ```bash
+   python scripts/parallel_web.py extract "https://doi.org/DOI_HERE" --objective "extract volume, issue, pages, publication year" -o sources/extract_YYYYMMDD_HHMMSS_doi_metadata.md
+   ```
+3. **If DOI is unknown**, search for it:
+   ```bash
+   python scripts/parallel_web.py search "AUTHOR TITLE JOURNAL DOI" -o sources/search_YYYYMMDD_HHMMSS_find_doi.md
+   ```
+4. **Update the BibTeX entry** with all found metadata
+5. **Log the fix**: `[HH:MM:SS] METADATA FIXED: [CitationKey] - added [fields] ✅`
+6. **If metadata truly cannot be found** (very old paper, obscure source), add a `note` field explaining why and log: `[HH:MM:SS] METADATA INCOMPLETE: [CitationKey] - [reason] ⚠️`
+
+**Verification process (for all citations):**
 1. Use research-lookup to find and verify paper exists
 2. Use `parallel_web.py search` or `parallel_web.py extract` for metadata (DOI, volume, pages)
 3. Cross-check at least 2 sources
 4. Log: `[HH:MM:SS] VERIFIED: [Author Year] ✅`
+
+**ZERO tolerance for incomplete metadata.** Every `@article` entry MUST have `volume`, `pages` (or article number), and `doi` fields. Run a final metadata completeness check before PDF compilation.
 
 ## Research Papers
 
@@ -330,6 +356,7 @@ Before marking complete:
 - [ ] Version numbers incremented if editing
 - [ ] 100% citations are REAL papers from research-lookup
 - [ ] All citation metadata verified with DOIs
+- [ ] **All BibTeX entries have complete metadata** (volume, pages, DOI) — web search performed for any missing fields
 - [ ] **All research results saved to `sources/`** (web searches, deep research, URL extracts, paper lookups)
 - [ ] **Graphical abstract generated** using scientific-schematics skill
 - [ ] **Minimum figure count met** (see table above)

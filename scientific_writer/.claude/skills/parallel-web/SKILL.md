@@ -240,23 +240,47 @@ This ensures all research is preserved for reproducibility, auditability, and co
 
 **CRITICAL: Every call to `parallel_web.py` MUST include the `-o` flag pointing to the `sources/` folder.**
 
+**CRITICAL: Saved files MUST preserve all citations and source URLs.** The default text output format automatically includes a `SOURCES` section at the end with numbered citations (title + URL). For maximum citation metadata (excerpts, dates, confidence), use `--json` format.
+
 ```bash
-# Web search — ALWAYS save to sources/
+# Web search — ALWAYS save to sources/ (includes URLs, titles, excerpts for each result)
 python scripts/parallel_web.py search "latest advances in quantum computing 2025" \
   -o sources/search_20250217_143000_quantum_computing.md
 
-# URL extraction — ALWAYS save to sources/
+# URL extraction — ALWAYS save to sources/ (includes source URLs, titles, extracted content)
 python scripts/parallel_web.py extract "https://example.com/article" --objective "key findings" \
   -o sources/extract_20250217_143500_example_article.md
 
-# Deep research — ALWAYS save to sources/
+# Deep research — ALWAYS save to sources/ (includes report text + SOURCES section with all citations)
 python scripts/parallel_web.py research "comprehensive analysis of the global EV battery market" \
   -o sources/research_20250217_144000_ev_battery_market.md
 
+# JSON format for maximum citation metadata (includes full citation objects with URLs, titles, excerpts)
+python scripts/parallel_web.py research "renewable energy storage market" --json \
+  -o sources/research_20250217_144500_renewable_energy.json
+
 # Structured JSON research — save JSON to sources/
 python scripts/parallel_web.py research "renewable energy storage market" --structured --json \
-  -o sources/research_20250217_144500_renewable_energy.json
+  -o sources/research_20250217_144500_renewable_energy_structured.json
 ```
+
+### Citation Preservation in Saved Files
+
+Each output format preserves citations differently:
+
+| Format | Citations Included | When to Use |
+|--------|-------------------|-------------|
+| Text (default) | `SOURCES` section with numbered `[title] + URL` entries | Standard use — human-readable with traceable sources |
+| JSON (`--json`) | Full citation objects: `url`, `title`, `excerpts`, `date`, `confidence` | When you need maximum citation metadata for verification |
+
+**For web search results**, saved files include per-result: URL, title, publish date, and excerpt.
+**For URL extractions**, saved files include per-URL: source URL, title, and extracted content.
+**For deep research**, saved files include: full report text + deduplicated SOURCES list with title and URL for every citation.
+
+**Use `--json` when you need to:**
+- Verify citation metadata later (excerpts, dates)
+- Cross-reference DOIs or specific URLs programmatically
+- Preserve the full structured citation data for audit purposes
 
 ### Why Save Everything
 

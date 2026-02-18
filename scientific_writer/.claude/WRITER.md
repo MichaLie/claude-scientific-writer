@@ -68,10 +68,12 @@ This is non-negotiable. Research results are expensive to obtain and critical fo
 
 **Key Rules:**
 - **ALWAYS** use the `-o` flag to save results to `sources/` — never discard research output
+- **ALWAYS** ensure saved files preserve all citations, source URLs, and DOIs (the scripts do this automatically — text format includes a Sources/References section; `--json` preserves full citation objects)
 - **ALWAYS** check `sources/` for existing results before making new API calls (avoid duplicate queries)
-- **ALWAYS** log saved results: `[HH:MM:SS] SAVED: [type] to sources/[filename] ([N] words/results)`
+- **ALWAYS** log saved results: `[HH:MM:SS] SAVED: [type] to sources/[filename] ([N] words/results, [N] citations)`
 - The `sources/` folder provides a complete audit trail of all research conducted for the project
 - Saved results enable context window recovery — re-read from `sources/` instead of re-querying APIs
+- Use `--json` format when maximum citation metadata is needed for BibTeX generation or DOI verification
 
 ## Workflow Protocol
 
