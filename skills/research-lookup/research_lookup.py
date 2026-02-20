@@ -3,11 +3,11 @@
 Research Information Lookup Tool
 
 Routes research queries to the best backend:
-  - Parallel Deep Research (pro-fast): Default for all general research queries
+  - Parallel Chat API (core model): Default for all general research queries
   - Perplexity sonar-pro-search (via OpenRouter): Academic-specific paper searches
 
 Environment variables:
-  PARALLEL_API_KEY    - Required for Parallel Deep Research (primary backend)
+  PARALLEL_API_KEY    - Required for Parallel Chat API (primary backend)
   OPENROUTER_API_KEY  - Required for Perplexity academic searches (fallback)
 """
 
@@ -24,11 +24,10 @@ from typing import Any, Dict, List, Optional
 class ResearchLookup:
     """Research information lookup with intelligent backend routing.
 
-    Routes queries to Parallel Deep Research (default) or Perplexity
+    Routes queries to the Parallel Chat API (default) or Perplexity
     sonar-pro-search (academic paper searches only).
     """
 
-    # Keywords that indicate an academic-specific query (routes to Perplexity)
     ACADEMIC_KEYWORDS = [
         "find papers", "find paper", "find articles", "find article",
         "cite ", "citation", "citations for",
@@ -45,6 +44,20 @@ class ResearchLookup:
         "highly cited", "most cited",
     ]
 
+    PARALLEL_SYSTEM_PROMPT = (
+        "You are a deep research analyst. Provide a comprehensive, well-cited "
+        "research report on the user's topic. Include:\n"
+        "- Key findings with specific data, statistics, and quantitative evidence\n"
+        "- Detailed analysis organized by themes\n"
+        "- Multiple authoritative sources cited inline\n"
+        "- Methodologies and implications where relevant\n"
+        "- Future outlook and research gaps\n"
+        "Use markdown formatting with clear section headers. "
+        "Prioritize authoritative and recent sources."
+    )
+
+    CHAT_BASE_URL = "https://api.parallel.ai"
+
     def __init__(self, force_backend: Optional[str] = None):
         """Initialize the research lookup tool.
 
@@ -53,32 +66,24 @@ class ResearchLookup:
                           If None, backend is auto-selected based on query content.
         """
         self.force_backend = force_backend
-
-        # Validate that at least one backend is available
         self.parallel_available = bool(os.getenv("PARALLEL_API_KEY"))
         self.perplexity_available = bool(os.getenv("OPENROUTER_API_KEY"))
 
         if not self.parallel_available and not self.perplexity_available:
             raise ValueError(
                 "No API keys found. Set at least one of:\n"
-                "  PARALLEL_API_KEY (for Parallel Deep Research - primary)\n"
+                "  PARALLEL_API_KEY (for Parallel Chat API - primary)\n"
                 "  OPENROUTER_API_KEY (for Perplexity academic search - fallback)"
             )
 
     def _select_backend(self, query: str) -> str:
-        """Select the best backend for a query.
-
-        Returns 'parallel' or 'perplexity' based on query content and
-        available API keys.
-        """
+        """Select the best backend for a query."""
         if self.force_backend:
             if self.force_backend == "perplexity" and self.perplexity_available:
                 return "perplexity"
             if self.force_backend == "parallel" and self.parallel_available:
                 return "parallel"
-            # Fall through if forced backend isn't available
 
-        # Check if query is academic-specific
         query_lower = query.lower()
         is_academic = any(kw in query_lower for kw in self.ACADEMIC_KEYWORDS)
 
@@ -88,137 +93,66 @@ class ResearchLookup:
         if self.parallel_available:
             return "parallel"
 
-        # Fallback: use whatever is available
         if self.perplexity_available:
             return "perplexity"
 
         raise ValueError("No backend available. Check API keys.")
 
     # ------------------------------------------------------------------
-    # Parallel Deep Research backend (delegates to parallel-web skill)
+    # Parallel Chat API backend
     # ------------------------------------------------------------------
 
-    def _get_parallel_researcher(self):
-        """Lazy-load and cache the ParallelDeepResearch instance."""
-        if not hasattr(self, "_parallel_researcher"):
-            # Import from the parallel-web skill's script
-            parallel_web_locations = [
-                os.path.join(os.path.dirname(__file__), "..", "..", "parallel-web", "scripts"),
-                os.path.join(os.path.dirname(__file__), "..", "parallel-web", "scripts"),
-            ]
-            for loc in parallel_web_locations:
-                abs_loc = os.path.abspath(loc)
-                if os.path.isdir(abs_loc) and abs_loc not in sys.path:
-                    sys.path.insert(0, abs_loc)
-
+    def _get_chat_client(self):
+        """Lazy-load and cache the OpenAI client for Parallel Chat API."""
+        if not hasattr(self, "_chat_client"):
             try:
-                from parallel_web import ParallelDeepResearch
-                self._parallel_researcher = ParallelDeepResearch()
+                from openai import OpenAI
             except ImportError:
-                # Fallback: construct directly if import path fails
-                self._parallel_researcher = self._build_parallel_researcher_fallback()
-        return self._parallel_researcher
-
-    def _build_parallel_researcher_fallback(self):
-        """Fallback Parallel researcher when parallel_web module is not importable."""
-        try:
-            from parallel import Parallel
-        except ImportError:
-            raise ImportError(
-                "The 'parallel-web' package is required for Parallel backend.\n"
-                "Install it with: pip install parallel-web"
-            )
-        # Return a simple wrapper using the SDK directly
-        class _FallbackResearcher:
-            def __init__(self):
-                self.client = Parallel(api_key=os.getenv("PARALLEL_API_KEY"))
-            def research(self, query, processor="pro-fast", timeout=3600, description=None):
-                from parallel.types import TaskSpecParam
-                text_schema = {"type": "text"}
-                if description:
-                    text_schema["description"] = description
-                task_run = self.client.task_run.create(
-                    input=query, processor=processor,
-                    task_spec=TaskSpecParam(output_schema=text_schema),
+                raise ImportError(
+                    "The 'openai' package is required for Parallel Chat API.\n"
+                    "Install it with: pip install openai"
                 )
-                run_result = self.client.task_run.result(task_run.run_id, api_timeout=timeout)
-                output_text = ""
-                citations = []
-                if hasattr(run_result, "output"):
-                    output = run_result.output
-                    if hasattr(output, "content"):
-                        output_text = output.content if isinstance(output.content, str) else json.dumps(output.content, indent=2)
-                    elif isinstance(output, str):
-                        output_text = output
-                    if hasattr(output, "basis") and output.basis:
-                        for basis_item in output.basis:
-                            if hasattr(basis_item, "citations") and basis_item.citations:
-                                for cit in basis_item.citations:
-                                    citations.append({
-                                        "type": "source",
-                                        "url": getattr(cit, "url", ""),
-                                        "title": getattr(cit, "title", ""),
-                                        "excerpts": getattr(cit, "excerpts", []),
-                                    })
-                return {
-                    "success": True, "query": query, "response": output_text,
-                    "output": output_text, "citations": citations,
-                    "sources": citations, "citation_count": len(citations),
-                    "run_id": task_run.run_id, "processor": processor,
-                    "backend": "parallel", "model": f"parallel/{processor}",
-                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                }
-        return _FallbackResearcher()
+            self._chat_client = OpenAI(
+                api_key=os.getenv("PARALLEL_API_KEY"),
+                base_url=self.CHAT_BASE_URL,
+            )
+        return self._chat_client
 
     def _parallel_lookup(self, query: str) -> Dict[str, Any]:
-        """Run research via Parallel Deep Research (pro-fast, text mode).
-
-        Delegates to the ParallelDeepResearch class from the parallel-web skill.
-        """
+        """Run research via the Parallel Chat API (core model)."""
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        processor = "pro-fast"
+        model = "core"
 
         try:
-            researcher = self._get_parallel_researcher()
+            client = self._get_chat_client()
 
-            description = (
-                "Provide a comprehensive, well-cited research report. "
-                "Include key findings, methodologies, statistics, and implications. "
-                "Prioritize authoritative and recent sources. "
-                "Structure the report with clear sections."
+            print(f"[Research] Parallel Chat API (model={model})...", file=sys.stderr)
+
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": self.PARALLEL_SYSTEM_PROMPT},
+                    {"role": "user", "content": query},
+                ],
+                stream=False,
             )
 
-            result = researcher.research(
-                query=query,
-                processor=processor,
-                description=description,
-            )
+            content = ""
+            if response.choices and len(response.choices) > 0:
+                content = response.choices[0].message.content or ""
 
-            if not result.get("success"):
-                return {
-                    "success": False,
-                    "query": query,
-                    "error": result.get("error", "Unknown error from Parallel"),
-                    "timestamp": timestamp,
-                    "backend": "parallel",
-                    "model": f"parallel/{processor}",
-                }
-
-            # Normalize the response and extract additional text citations
-            response_text = result.get("response", result.get("output", ""))
-            api_citations = result.get("sources", result.get("citations", []))
-            text_citations = self._extract_citations_from_text(response_text)
+            api_citations = self._extract_basis_citations(response)
+            text_citations = self._extract_citations_from_text(content)
 
             return {
                 "success": True,
                 "query": query,
-                "response": response_text,
+                "response": content,
                 "citations": api_citations + text_citations,
                 "sources": api_citations,
                 "timestamp": timestamp,
                 "backend": "parallel",
-                "model": result.get("model", f"parallel/{processor}"),
-                "run_id": result.get("run_id"),
+                "model": f"parallel-chat/{model}",
             }
 
         except Exception as e:
@@ -228,8 +162,37 @@ class ResearchLookup:
                 "error": str(e),
                 "timestamp": timestamp,
                 "backend": "parallel",
-                "model": f"parallel/{processor}",
+                "model": f"parallel-chat/{model}",
             }
+
+    def _extract_basis_citations(self, response) -> List[Dict[str, str]]:
+        """Extract citation sources from the Chat API research basis."""
+        citations = []
+        basis = getattr(response, "basis", None)
+        if not basis:
+            return citations
+
+        seen_urls = set()
+        if isinstance(basis, list):
+            for item in basis:
+                cits = (
+                    item.get("citations", []) if isinstance(item, dict)
+                    else getattr(item, "citations", None) or []
+                )
+                for cit in cits:
+                    url = cit.get("url", "") if isinstance(cit, dict) else getattr(cit, "url", "")
+                    if url and url not in seen_urls:
+                        seen_urls.add(url)
+                        title = cit.get("title", "") if isinstance(cit, dict) else getattr(cit, "title", "")
+                        excerpts = cit.get("excerpts", []) if isinstance(cit, dict) else getattr(cit, "excerpts", [])
+                        citations.append({
+                            "type": "source",
+                            "url": url,
+                            "title": title,
+                            "excerpts": excerpts,
+                        })
+
+        return citations
 
     # ------------------------------------------------------------------
     # Perplexity academic search backend
@@ -366,7 +329,6 @@ Remember: Quality over quantity. Prioritize influential, highly-cited papers fro
         """Extract citations from Perplexity API response fields."""
         citations = []
 
-        # Perplexity returns citations in search_results field
         search_results = (
             response.get("search_results")
             or choice.get("search_results")
@@ -385,7 +347,6 @@ Remember: Quality over quantity. Prioritize influential, highly-cited papers fro
                 citation["snippet"] = result["snippet"]
             citations.append(citation)
 
-        # Legacy citations field (backward compatibility)
         legacy_citations = (
             response.get("citations")
             or choice.get("citations")
@@ -410,7 +371,6 @@ Remember: Quality over quantity. Prioritize influential, highly-cited papers fro
         """Extract DOIs and academic URLs from response text as fallback."""
         citations = []
 
-        # DOI patterns
         doi_pattern = r'(?:doi[:\s]*|https?://(?:dx\.)?doi\.org/)(10\.[0-9]{4,}/[^\s\)\]\,\[\<\>]+)'
         doi_matches = re.findall(doi_pattern, text, re.IGNORECASE)
         seen_dois = set()
@@ -425,7 +385,6 @@ Remember: Quality over quantity. Prioritize influential, highly-cited papers fro
                     "url": f"https://doi.org/{doi_clean}",
                 })
 
-        # Academic URLs
         url_pattern = (
             r'https?://[^\s\)\]\,\<\>\"\']+(?:arxiv\.org|pubmed|ncbi\.nlm\.nih\.gov|'
             r'nature\.com|science\.org|wiley\.com|springer\.com|ieee\.org|acm\.org)'
@@ -449,7 +408,7 @@ Remember: Quality over quantity. Prioritize influential, highly-cited papers fro
     def lookup(self, query: str) -> Dict[str, Any]:
         """Perform a research lookup, routing to the best backend.
 
-        Parallel Deep Research is used by default. Perplexity sonar-pro-search
+        Parallel Chat API is used by default. Perplexity sonar-pro-search
         is used only for academic-specific queries (paper searches, DOI lookups).
         """
         backend = self._select_backend(query)
@@ -481,11 +440,11 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Research Information Lookup Tool (Parallel + Perplexity)",
+        description="Research Information Lookup Tool (Parallel Chat API + Perplexity)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # General research (uses Parallel Deep Research)
+  # General research (uses Parallel Chat API, core model)
   python research_lookup.py "latest advances in quantum computing 2025"
 
   # Academic paper search (auto-routes to Perplexity)
@@ -524,12 +483,11 @@ Examples:
         else:
             print(text)
 
-    # Check for at least one API key
     has_parallel = bool(os.getenv("PARALLEL_API_KEY"))
     has_perplexity = bool(os.getenv("OPENROUTER_API_KEY"))
     if not has_parallel and not has_perplexity:
         print("Error: No API keys found. Set at least one:", file=sys.stderr)
-        print("  export PARALLEL_API_KEY='...'    (primary - Parallel Deep Research)", file=sys.stderr)
+        print("  export PARALLEL_API_KEY='...'    (primary - Parallel Chat API)", file=sys.stderr)
         print("  export OPENROUTER_API_KEY='...'   (fallback - Perplexity academic)", file=sys.stderr)
         if output_file:
             output_file.close()
@@ -563,8 +521,6 @@ Examples:
                 write_output(f"Query {i+1}: {result['query']}")
                 write_output(f"Timestamp: {result['timestamp']}")
                 write_output(f"Backend: {result.get('backend', 'unknown')} | Model: {result.get('model', 'unknown')}")
-                if result.get("run_id"):
-                    write_output(f"Run ID: {result['run_id']}")
                 write_output(f"{'='*80}")
                 write_output(result["response"])
 

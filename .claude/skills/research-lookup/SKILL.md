@@ -1,6 +1,6 @@
 ---
 name: research-lookup
-description: "Look up current research information using Parallel Deep Research (primary) or Perplexity sonar-pro-search (academic paper searches). Automatically routes queries to the best backend. Use for finding papers, gathering research data, and verifying scientific information."
+description: "Look up current research information using the Parallel Chat API (primary) or Perplexity sonar-pro-search (academic paper searches). Automatically routes queries to the best backend. Use for finding papers, gathering research data, and verifying scientific information."
 allowed-tools: [Read, Write, Edit, Bash]
 ---
 
@@ -10,7 +10,7 @@ allowed-tools: [Read, Write, Edit, Bash]
 
 This skill provides real-time research information lookup with **intelligent backend routing**:
 
-- **Parallel Deep Research** (`pro-fast`): Default backend for all general research queries. Provides comprehensive, multi-source intelligence reports with inline citations.
+- **Parallel Chat API** (`core` model): Default backend for all general research queries. Provides comprehensive, multi-source research reports with inline citations via the OpenAI-compatible Chat API at `https://api.parallel.ai`.
 - **Perplexity sonar-pro-search** (via OpenRouter): Used only for academic-specific paper searches where scholarly database access is critical.
 
 The skill automatically detects query type and routes to the optimal backend.
@@ -54,7 +54,7 @@ Query arrives
     |       YES --> Perplexity sonar-pro-search (academic search mode)
     |
     +-- Everything else (general research, market data, technical info, analysis)
-            --> Parallel Deep Research (pro-fast processor)
+            --> Parallel Chat API (core model)
 ```
 
 ### Academic Keywords (Routes to Perplexity)
@@ -69,7 +69,7 @@ Queries containing these terms are routed to Perplexity for academic-focused sea
 
 ### Everything Else (Routes to Parallel)
 
-All other queries go to Parallel Deep Research, including:
+All other queries go to the Parallel Chat API (core model), including:
 
 - General research questions
 - Market and industry analysis
@@ -95,9 +95,9 @@ python research_lookup.py "your query" --force-backend perplexity
 
 ## Core Capabilities
 
-### 1. General Research Queries (Parallel Deep Research)
+### 1. General Research Queries (Parallel Chat API)
 
-**Default backend.** Provides comprehensive, multi-source research with citations.
+**Default backend.** Provides comprehensive, multi-source research with citations via the Chat API (`core` model).
 
 ```
 Query Examples:
@@ -192,7 +192,7 @@ Query Examples:
 ### Environment Variables
 
 ```bash
-# Primary backend (Parallel Deep Research) - REQUIRED
+# Primary backend (Parallel Chat API) - REQUIRED
 export PARALLEL_API_KEY="your_parallel_api_key"
 
 # Academic search backend (Perplexity) - REQUIRED for academic queries
@@ -201,11 +201,13 @@ export OPENROUTER_API_KEY="your_openrouter_api_key"
 
 ### API Specifications
 
-**Parallel Deep Research:**
-- Processor: `pro-fast` (30s-5min latency)
+**Parallel Chat API:**
+- Endpoint: `https://api.parallel.ai` (OpenAI SDK compatible)
+- Model: `core` (60s-5min latency, complex multi-source synthesis)
 - Output: Markdown text with inline citations
-- Citations: URL-based with excerpts and confidence levels
-- Rate limits: Varies by processor tier
+- Citations: Research basis with URLs, reasoning, and confidence levels
+- Rate limits: 300 req/min
+- Python package: `openai`
 
 **Perplexity sonar-pro-search:**
 - Model: `perplexity/sonar-pro-search` (via OpenRouter)
@@ -336,7 +338,7 @@ This skill enhances scientific writing by providing:
 | Task | Tool |
 |------|------|
 | General web search | `parallel-web` skill (`parallel_web.py search`) |
-| Extract URL content | `parallel-web` skill (`parallel_web.py extract`) |
+| Citation verification | `parallel-web` skill (`parallel_web.py extract`) |
 | Deep research (any topic) | `research-lookup` or `parallel-web` skill |
 | Academic paper search | `research-lookup` (auto-routes to Perplexity) |
 | Google Scholar search | `citation-management` skill |
@@ -349,7 +351,7 @@ This skill enhances scientific writing by providing:
 ## Error Handling and Limitations
 
 **Known Limitations:**
-- Parallel Deep Research: 15,000 character input limit, may take up to 5 minutes
+- Parallel Chat API (core model): Complex queries may take up to 5 minutes
 - Perplexity: Information cutoff, may not access full text behind paywalls
 - Both: Cannot access proprietary or restricted databases
 
@@ -366,7 +368,7 @@ This skill enhances scientific writing by providing:
 
 **Query**: "Recent advances in transformer attention mechanisms 2025"
 
-**Backend**: Parallel Deep Research (pro-fast)
+**Backend**: Parallel Chat API (core model)
 
 **Response**: Comprehensive markdown report with citations from authoritative sources, covering recent papers, key innovations, and performance benchmarks.
 
@@ -382,7 +384,7 @@ This skill enhances scientific writing by providing:
 
 **Query**: "Compare and contrast mRNA vaccines vs traditional vaccines for cancer treatment"
 
-**Backend**: Parallel Deep Research (pro-fast)
+**Backend**: Parallel Chat API (core model)
 
 **Response**: Detailed comparative report with data from multiple sources, structured analysis, and cited evidence.
 
@@ -390,7 +392,7 @@ This skill enhances scientific writing by providing:
 
 **Query**: "Global AI adoption in healthcare statistics 2025"
 
-**Backend**: Parallel Deep Research (pro-fast)
+**Backend**: Parallel Chat API (core model)
 
 **Response**: Current market data, adoption rates, growth projections, and regional analysis with source citations.
 
@@ -400,7 +402,7 @@ This skill enhances scientific writing by providing:
 
 This skill serves as the primary research interface with intelligent dual-backend routing:
 
-- **Parallel Deep Research** (default): Comprehensive, multi-source research for any topic
+- **Parallel Chat API** (default, `core` model): Comprehensive, multi-source research for any topic
 - **Perplexity sonar-pro-search**: Academic-specific paper searches only
 - **Automatic routing**: Detects academic queries and routes appropriately
 - **Manual override**: Force any backend when needed

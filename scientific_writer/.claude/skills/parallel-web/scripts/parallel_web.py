@@ -3,12 +3,16 @@
 Parallel Web Systems API Client
 
 Provides web search, URL content extraction, and deep research capabilities
-using the Parallel Web Systems API (https://docs.parallel.ai).
+using the Parallel Web Systems APIs (https://docs.parallel.ai).
 
-Three main classes:
-  - ParallelSearch:       Web search with LLM-optimized excerpts
-  - ParallelExtract:      URL content extraction to clean markdown
-  - ParallelDeepResearch: Deep research via Task API with citations
+Primary interface: Parallel Chat API (OpenAI-compatible) for search and research.
+Secondary interface: Extract API for URL verification and special cases.
+
+Main classes:
+  - ParallelChat:         Core Chat API client (base/core models)
+  - ParallelSearch:       Web search via Chat API (base model)
+  - ParallelDeepResearch: Deep research via Chat API (core model)
+  - ParallelExtract:      URL content extraction (Extract API, verification only)
 
 Environment variable required:
   PARALLEL_API_KEY - Your Parallel API key from https://platform.parallel.ai
@@ -17,22 +21,13 @@ Environment variable required:
 import os
 import sys
 import json
-import time
 import argparse
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 
-def _get_client():
-    """Create and return a Parallel client, handling import and key validation."""
-    try:
-        from parallel import Parallel
-    except ImportError:
-        raise ImportError(
-            "The 'parallel-web' package is required. Install it with:\n"
-            "  pip install parallel-web"
-        )
-
+def _get_api_key():
+    """Validate and return the Parallel API key."""
     api_key = os.getenv("PARALLEL_API_KEY")
     if not api_key:
         raise ValueError(
@@ -40,92 +35,202 @@ def _get_client():
             "Get your key at https://platform.parallel.ai and set it:\n"
             "  export PARALLEL_API_KEY='your_key_here'"
         )
-    return Parallel(api_key=api_key)
+    return api_key
 
 
-class ParallelSearch:
-    """Web search using Parallel's Search API.
+def _get_extract_client():
+    """Create and return a Parallel SDK client for the Extract API."""
+    try:
+        from parallel import Parallel
+    except ImportError:
+        raise ImportError(
+            "The 'parallel-web' package is required for extract. Install it with:\n"
+            "  pip install parallel-web"
+        )
+    return Parallel(api_key=_get_api_key())
 
-    Returns ranked, LLM-optimized excerpts from web sources based on
-    natural language objectives or keyword queries.
+
+class ParallelChat:
+    """Core client for the Parallel Chat API.
+
+    OpenAI-compatible chat completions endpoint that performs web research
+    and returns synthesized responses with citations.
+
+    Models:
+      - base  : Standard research, factual queries (15-100s latency)
+      - core  : Complex research, multi-source synthesis (60s-5min latency)
     """
 
-    def __init__(self):
-        self.client = _get_client()
+    CHAT_BASE_URL = "https://api.parallel.ai"
 
-    def search(
+    def __init__(self):
+        try:
+            from openai import OpenAI
+        except ImportError:
+            raise ImportError(
+                "The 'openai' package is required. Install it with:\n"
+                "  pip install openai"
+            )
+
+        self.client = OpenAI(
+            api_key=_get_api_key(),
+            base_url=self.CHAT_BASE_URL,
+        )
+
+    def query(
         self,
-        objective: str,
-        search_queries: Optional[List[str]] = None,
-        max_results: int = 10,
-        max_chars_per_result: int = 10000,
-        source_policy: Optional[Dict[str, Any]] = None,
+        user_message: str,
+        system_message: Optional[str] = None,
+        model: str = "base",
     ) -> Dict[str, Any]:
-        """Execute a web search.
+        """Send a query to the Parallel Chat API.
 
         Args:
-            objective: Natural language description of the search goal.
-            search_queries: Optional keyword queries to supplement the objective.
-            max_results: Maximum number of results (1-20, default 10).
-            max_chars_per_result: Max characters per excerpt (default 10000).
-            source_policy: Optional source policy dict for domain filtering.
+            user_message: The research query or question.
+            system_message: Optional system prompt to guide response style.
+            model: Chat model to use ('base' or 'core').
 
         Returns:
-            Dict with 'results' list containing url, title, excerpts, etc.
+            Dict with 'content' (response text), 'sources' (citations), and metadata.
         """
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        kwargs = {
-            "objective": objective,
-            "max_results": max_results,
-            "excerpts": {"max_chars_per_result": max_chars_per_result},
-        }
-        if search_queries:
-            kwargs["search_queries"] = search_queries
-        if source_policy:
-            kwargs["source_policy"] = source_policy
+        messages = []
+        if system_message:
+            messages.append({"role": "system", "content": system_message})
+        messages.append({"role": "user", "content": user_message})
 
         try:
-            response = self.client.beta.search(**kwargs)
+            print(f"[Parallel Chat] Querying model={model}...", file=sys.stderr)
 
-            results = []
-            if hasattr(response, "results") and response.results:
-                for r in response.results:
-                    result = {
-                        "url": getattr(r, "url", ""),
-                        "title": getattr(r, "title", ""),
-                        "publish_date": getattr(r, "publish_date", None),
-                        "excerpts": getattr(r, "excerpts", []),
-                    }
-                    results.append(result)
+            response = self.client.chat.completions.create(
+                model=model,
+                messages=messages,
+                stream=False,
+            )
+
+            content = ""
+            if response.choices and len(response.choices) > 0:
+                content = response.choices[0].message.content or ""
+
+            sources = self._extract_basis(response)
 
             return {
                 "success": True,
-                "objective": objective,
-                "results": results,
-                "result_count": len(results),
+                "content": content,
+                "sources": sources,
+                "citation_count": len(sources),
+                "model": model,
                 "timestamp": timestamp,
-                "search_id": getattr(response, "search_id", None),
             }
 
         except Exception as e:
             return {
                 "success": False,
-                "objective": objective,
                 "error": str(e),
+                "model": model,
                 "timestamp": timestamp,
             }
+
+    def _extract_basis(self, response) -> List[Dict[str, str]]:
+        """Extract citation sources from the Chat API research basis."""
+        sources = []
+        basis = getattr(response, "basis", None)
+        if not basis:
+            return sources
+
+        seen_urls = set()
+        if isinstance(basis, list):
+            for item in basis:
+                citations = (
+                    item.get("citations", []) if isinstance(item, dict)
+                    else getattr(item, "citations", None) or []
+                )
+                for cit in citations:
+                    url = cit.get("url", "") if isinstance(cit, dict) else getattr(cit, "url", "")
+                    if url and url not in seen_urls:
+                        seen_urls.add(url)
+                        title = cit.get("title", "") if isinstance(cit, dict) else getattr(cit, "title", "")
+                        excerpts = cit.get("excerpts", []) if isinstance(cit, dict) else getattr(cit, "excerpts", [])
+                        sources.append({
+                            "type": "source",
+                            "url": url,
+                            "title": title,
+                            "excerpts": excerpts,
+                        })
+
+        return sources
+
+
+class ParallelSearch:
+    """Web search using the Parallel Chat API (base model).
+
+    Sends a search query to the Chat API which performs web research and
+    returns a synthesized summary with cited sources.
+    """
+
+    SYSTEM_PROMPT = (
+        "You are a web research assistant. Search the web and synthesize information "
+        "about the user's query. Provide a clear, well-organized summary with:\n"
+        "- Key facts, data points, and statistics\n"
+        "- Specific names, dates, and numbers when available\n"
+        "- Multiple perspectives if the topic is debated\n"
+        "Cite your sources inline. Be comprehensive but concise."
+    )
+
+    def __init__(self):
+        self.chat = ParallelChat()
+
+    def search(
+        self,
+        objective: str,
+        model: str = "base",
+    ) -> Dict[str, Any]:
+        """Execute a web search via the Chat API.
+
+        Args:
+            objective: Natural language description of the search goal.
+            model: Chat model to use ('base' or 'core', default 'base').
+
+        Returns:
+            Dict with 'response' (synthesized text), 'sources', and metadata.
+        """
+        result = self.chat.query(
+            user_message=objective,
+            system_message=self.SYSTEM_PROMPT,
+            model=model,
+        )
+
+        if not result["success"]:
+            return {
+                "success": False,
+                "objective": objective,
+                "error": result.get("error", "Unknown error"),
+                "timestamp": result["timestamp"],
+            }
+
+        return {
+            "success": True,
+            "objective": objective,
+            "response": result["content"],
+            "sources": result["sources"],
+            "citation_count": result["citation_count"],
+            "model": result["model"],
+            "backend": "parallel-chat",
+            "timestamp": result["timestamp"],
+        }
 
 
 class ParallelExtract:
     """Extract clean content from URLs using Parallel's Extract API.
 
-    Converts any public URL into clean, LLM-optimized markdown including
-    JavaScript-heavy pages and PDFs.
+    Converts any public URL into clean, LLM-optimized markdown.
+    Use for citation verification and special cases only.
+    For general research, use ParallelSearch or ParallelDeepResearch instead.
     """
 
     def __init__(self):
-        self.client = _get_client()
+        self.client = _get_extract_client()
 
     def extract(
         self,
@@ -193,197 +298,70 @@ class ParallelExtract:
 
 
 class ParallelDeepResearch:
-    """Deep research using Parallel's Task API.
+    """Deep research using the Parallel Chat API (core model).
 
-    Transforms natural language research queries into comprehensive
-    intelligence reports with citations, reasoning, and confidence levels.
-
-    Processor guide:
-      - pro-fast     (default): 30s-5min, exploratory web research, fast
-      - pro          : 2-10min, exploratory web research, freshest data
-      - ultra-fast   : 1-10min, advanced multi-source deep research, fast
-      - ultra        : 5-25min, advanced multi-source deep research
-      - core-fast    : 15s-100s, cross-referenced moderately complex outputs
-      - base-fast    : 15s-50s, reliable standard enrichments
+    Sends complex research queries to the Chat API which performs
+    multi-source web research and returns comprehensive reports with citations.
     """
 
-    # Default timeout for polling (1 hour)
-    DEFAULT_TIMEOUT = 3600
+    SYSTEM_PROMPT = (
+        "You are a deep research analyst. Provide a comprehensive, well-structured "
+        "research report on the user's topic. Include:\n"
+        "- Executive summary of key findings\n"
+        "- Detailed analysis organized by themes\n"
+        "- Specific data, statistics, and quantitative evidence\n"
+        "- Multiple authoritative sources\n"
+        "- Implications and future outlook where relevant\n"
+        "Use markdown formatting with clear section headers. "
+        "Cite all sources inline."
+    )
 
     def __init__(self):
-        self.client = _get_client()
+        self.chat = ParallelChat()
 
     def research(
         self,
         query: str,
-        processor: str = "pro-fast",
-        timeout: int = DEFAULT_TIMEOUT,
-        description: Optional[str] = None,
+        model: str = "core",
+        system_prompt: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Run deep research and return a markdown text report.
+        """Run deep research via the Chat API.
 
         Args:
-            query: The research question or topic (max 15,000 chars).
-            processor: Task API processor to use (default 'pro-fast').
-            timeout: Max seconds to wait for results (default 3600).
-            description: Optional description to guide report output.
+            query: The research question or topic.
+            model: Chat model to use ('base' or 'core', default 'core').
+            system_prompt: Optional override for the system prompt.
 
         Returns:
-            Dict with 'output' (markdown text), 'citations', and metadata.
+            Dict with 'response' (markdown report), 'citations', and metadata.
         """
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        result = self.chat.query(
+            user_message=query,
+            system_message=system_prompt or self.SYSTEM_PROMPT,
+            model=model,
+        )
 
-        try:
-            from parallel.types import TaskSpecParam
-
-            task_spec_kwargs = {}
-            text_schema = {"type": "text"}
-            if description:
-                text_schema["description"] = description
-            task_spec_kwargs["output_schema"] = text_schema
-
-            task_run = self.client.task_run.create(
-                input=query,
-                processor=processor,
-                task_spec=TaskSpecParam(**task_spec_kwargs),
-            )
-
-            run_id = task_run.run_id
-            print(f"[Parallel] Deep research started: {run_id} (processor: {processor})", file=sys.stderr)
-
-            run_result = self.client.task_run.result(run_id, api_timeout=timeout)
-
-            output_text = ""
-            citations = []
-
-            if hasattr(run_result, "output"):
-                output = run_result.output
-                if hasattr(output, "content"):
-                    output_text = output.content if isinstance(output.content, str) else json.dumps(output.content, indent=2)
-                elif isinstance(output, str):
-                    output_text = output
-
-                if hasattr(output, "basis") and output.basis:
-                    for basis_item in output.basis:
-                        if hasattr(basis_item, "citations") and basis_item.citations:
-                            for cit in basis_item.citations:
-                                citation = {
-                                    "type": "source",
-                                    "url": getattr(cit, "url", ""),
-                                    "title": getattr(cit, "title", ""),
-                                    "excerpts": getattr(cit, "excerpts", []),
-                                }
-                                citations.append(citation)
-
-            return {
-                "success": True,
-                "query": query,
-                "response": output_text,
-                "output": output_text,  # alias for backward compat
-                "citations": citations,
-                "sources": citations,   # alias matching research_lookup format
-                "citation_count": len(citations),
-                "run_id": run_id,
-                "processor": processor,
-                "backend": "parallel",
-                "model": f"parallel/{processor}",
-                "timestamp": timestamp,
-            }
-
-        except Exception as e:
+        if not result["success"]:
             return {
                 "success": False,
                 "query": query,
-                "error": str(e),
-                "processor": processor,
-                "timestamp": timestamp,
+                "error": result.get("error", "Unknown error"),
+                "model": model,
+                "timestamp": result["timestamp"],
             }
 
-    def research_structured(
-        self,
-        query: str,
-        processor: str = "pro-fast",
-        output_schema: Optional[Dict[str, Any]] = None,
-        timeout: int = DEFAULT_TIMEOUT,
-    ) -> Dict[str, Any]:
-        """Run deep research and return structured JSON output.
-
-        Uses auto-schema mode by default, which lets the processor determine
-        the best output structure. You can also provide a custom JSON schema.
-
-        Args:
-            query: The research question or topic (max 15,000 chars).
-            processor: Task API processor to use (default 'pro-fast').
-            output_schema: Optional JSON schema dict for structured output.
-            timeout: Max seconds to wait for results (default 3600).
-
-        Returns:
-            Dict with 'content' (structured data), 'basis' (citations), metadata.
-        """
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-        try:
-            create_kwargs = {
-                "input": query,
-                "processor": processor,
-            }
-
-            if output_schema:
-                from parallel.types import TaskSpecParam
-                create_kwargs["task_spec"] = TaskSpecParam(
-                    output_schema={"type": "json", "json_schema": output_schema}
-                )
-            # else: auto-schema mode (default for pro/ultra processors)
-
-            task_run = self.client.task_run.create(**create_kwargs)
-            run_id = task_run.run_id
-            print(f"[Parallel] Structured research started: {run_id} (processor: {processor})", file=sys.stderr)
-
-            run_result = self.client.task_run.result(run_id, api_timeout=timeout)
-
-            content = None
-            basis = []
-
-            if hasattr(run_result, "output"):
-                output = run_result.output
-                if hasattr(output, "content"):
-                    content = output.content
-                if hasattr(output, "basis") and output.basis:
-                    for b in output.basis:
-                        basis_entry = {
-                            "field": getattr(b, "field", ""),
-                            "reasoning": getattr(b, "reasoning", ""),
-                            "confidence": getattr(b, "confidence", ""),
-                            "citations": [],
-                        }
-                        if hasattr(b, "citations") and b.citations:
-                            for cit in b.citations:
-                                basis_entry["citations"].append({
-                                    "type": "source",
-                                    "url": getattr(cit, "url", ""),
-                                    "title": getattr(cit, "title", ""),
-                                    "excerpts": getattr(cit, "excerpts", []),
-                                })
-                        basis.append(basis_entry)
-
-            return {
-                "success": True,
-                "query": query,
-                "content": content,
-                "basis": basis,
-                "run_id": run_id,
-                "processor": processor,
-                "timestamp": timestamp,
-            }
-
-        except Exception as e:
-            return {
-                "success": False,
-                "query": query,
-                "error": str(e),
-                "processor": processor,
-                "timestamp": timestamp,
-            }
+        return {
+            "success": True,
+            "query": query,
+            "response": result["content"],
+            "output": result["content"],
+            "citations": result["sources"],
+            "sources": result["sources"],
+            "citation_count": result["citation_count"],
+            "model": model,
+            "backend": "parallel-chat",
+            "timestamp": result["timestamp"],
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -391,7 +369,7 @@ class ParallelDeepResearch:
 # ---------------------------------------------------------------------------
 
 def _print_search_results(result: Dict[str, Any], output_file=None):
-    """Pretty-print search results."""
+    """Print search results (synthesized summary + sources)."""
     def write(text):
         if output_file:
             output_file.write(text + "\n")
@@ -404,19 +382,20 @@ def _print_search_results(result: Dict[str, Any], output_file=None):
 
     write(f"\n{'='*80}")
     write(f"Search: {result['objective']}")
-    write(f"Results: {result['result_count']} | Time: {result['timestamp']}")
-    write(f"{'='*80}")
+    write(f"Model: {result['model']} | Time: {result['timestamp']}")
+    write(f"{'='*80}\n")
 
-    for i, r in enumerate(result["results"]):
-        write(f"\n[{i+1}] {r['title']}")
-        write(f"    URL: {r['url']}")
-        if r.get("publish_date"):
-            write(f"    Date: {r['publish_date']}")
-        if r.get("excerpts"):
-            excerpt = r["excerpts"][0] if isinstance(r["excerpts"], list) else str(r["excerpts"])
-            if len(excerpt) > 300:
-                excerpt = excerpt[:300] + "..."
-            write(f"    Excerpt: {excerpt}")
+    write(result.get("response", "No response received."))
+
+    sources = result.get("sources", [])
+    if sources:
+        write(f"\n\n{'='*40} SOURCES {'='*40}")
+        for i, src in enumerate(sources):
+            title = src.get("title", "Untitled")
+            url = src.get("url", "")
+            write(f"  [{i+1}] {title}")
+            if url:
+                write(f"      {url}")
 
 
 def _print_extract_results(result: Dict[str, Any], output_file=None):
@@ -451,7 +430,7 @@ def _print_extract_results(result: Dict[str, Any], output_file=None):
 
 
 def _print_research_results(result: Dict[str, Any], output_file=None):
-    """Pretty-print deep research results."""
+    """Print deep research results (report + sources)."""
     def write(text):
         if output_file:
             output_file.write(text + "\n")
@@ -463,18 +442,20 @@ def _print_research_results(result: Dict[str, Any], output_file=None):
         return
 
     write(f"\n{'='*80}")
-    write(f"Research: {result['query'][:100]}...")
-    write(f"Processor: {result['processor']} | Run: {result.get('run_id', 'N/A')}")
-    write(f"Citations: {result.get('citation_count', 0)} | Time: {result['timestamp']}")
+    query_display = result['query'][:100]
+    if len(result['query']) > 100:
+        query_display += "..."
+    write(f"Research: {query_display}")
+    write(f"Model: {result['model']} | Citations: {result.get('citation_count', 0)} | Time: {result['timestamp']}")
     write(f"{'='*80}\n")
 
     write(result.get("response", result.get("output", "No output received.")))
 
-    citations = result.get("citations", [])
+    citations = result.get("citations", result.get("sources", []))
     if citations:
         write(f"\n\n{'='*40} SOURCES {'='*40}")
         seen_urls = set()
-        for i, cit in enumerate(citations):
+        for cit in citations:
             url = cit.get("url", "")
             if url and url not in seen_urls:
                 seen_urls.add(url)
@@ -490,10 +471,10 @@ def main():
         epilog="""
 Examples:
   python parallel_web.py search "latest advances in quantum computing"
-  python parallel_web.py search "climate policy 2025" --queries "Paris agreement updates" "carbon tax"
+  python parallel_web.py search "climate policy 2025" --model core
   python parallel_web.py extract "https://example.com" --objective "key findings"
   python parallel_web.py research "comprehensive analysis of EV battery market"
-  python parallel_web.py research "compare mRNA vs protein subunit vaccines" --processor ultra-fast
+  python parallel_web.py research "compare mRNA vs protein subunit vaccines" --model base
   python parallel_web.py research "AI regulation landscape 2025" -o report.md
         """,
     )
@@ -501,15 +482,15 @@ Examples:
     subparsers = parser.add_subparsers(dest="command", help="API command")
 
     # --- search subcommand ---
-    search_parser = subparsers.add_parser("search", help="Web search with LLM-optimized excerpts")
+    search_parser = subparsers.add_parser("search", help="Web search via Chat API (synthesized results)")
     search_parser.add_argument("objective", help="Natural language search objective")
-    search_parser.add_argument("--queries", nargs="+", help="Additional search keyword queries")
-    search_parser.add_argument("--max-results", type=int, default=10, help="Max results (1-20, default 10)")
+    search_parser.add_argument("--model", default="base", choices=["base", "core"],
+                               help="Chat model to use (default: base)")
     search_parser.add_argument("-o", "--output", help="Write output to file")
     search_parser.add_argument("--json", action="store_true", help="Output as JSON")
 
     # --- extract subcommand ---
-    extract_parser = subparsers.add_parser("extract", help="Extract content from URLs")
+    extract_parser = subparsers.add_parser("extract", help="Extract content from URLs (verification only)")
     extract_parser.add_argument("urls", nargs="+", help="One or more URLs to extract")
     extract_parser.add_argument("--objective", help="Objective to focus extraction")
     extract_parser.add_argument("--full-content", action="store_true", help="Return full page content")
@@ -517,15 +498,10 @@ Examples:
     extract_parser.add_argument("--json", action="store_true", help="Output as JSON")
 
     # --- research subcommand ---
-    research_parser = subparsers.add_parser("research", help="Deep research via Task API")
+    research_parser = subparsers.add_parser("research", help="Deep research via Chat API (comprehensive report)")
     research_parser.add_argument("query", help="Research question or topic")
-    research_parser.add_argument("--processor", default="pro-fast",
-                                  choices=["lite-fast", "base-fast", "core-fast", "pro-fast",
-                                           "ultra-fast", "lite", "base", "core", "pro", "ultra",
-                                           "ultra2x", "ultra2x-fast", "ultra4x", "ultra4x-fast"],
-                                  help="Processor to use (default: pro-fast)")
-    research_parser.add_argument("--structured", action="store_true", help="Return structured JSON (auto-schema)")
-    research_parser.add_argument("--timeout", type=int, default=3600, help="Max wait time in seconds (default 3600)")
+    research_parser.add_argument("--model", default="core", choices=["base", "core"],
+                                 help="Chat model to use (default: core)")
     research_parser.add_argument("-o", "--output", help="Write output to file")
     research_parser.add_argument("--json", action="store_true", help="Output as JSON")
 
@@ -544,8 +520,7 @@ Examples:
             searcher = ParallelSearch()
             result = searcher.search(
                 objective=args.objective,
-                search_queries=args.queries,
-                max_results=args.max_results,
+                model=args.model,
             )
             if args.json:
                 text = json.dumps(result, indent=2, ensure_ascii=False, default=str)
@@ -568,18 +543,10 @@ Examples:
 
         elif args.command == "research":
             researcher = ParallelDeepResearch()
-            if args.structured:
-                result = researcher.research_structured(
-                    query=args.query,
-                    processor=args.processor,
-                    timeout=args.timeout,
-                )
-            else:
-                result = researcher.research(
-                    query=args.query,
-                    processor=args.processor,
-                    timeout=args.timeout,
-                )
+            result = researcher.research(
+                query=args.query,
+                model=args.model,
+            )
             if args.json:
                 text = json.dumps(result, indent=2, ensure_ascii=False, default=str)
                 (output_file or sys.stdout).write(text + "\n")
